@@ -31,7 +31,7 @@ main =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( Model "Wards" "Mayor" "5" False (LngLat 0 0) (Point 0 0) False [] False
+    ( Model "Wards" "Mayor" "5" False (LngLat 0 0) (Point 0 0) False False [] False
     , Cmd.none
     )
 
@@ -278,16 +278,14 @@ popupElFeat model candidates feat =
         ]
         [ div [ class "mapboxgl-popup-tip" ] []
         , div [ class "mapboxgl-popup-content" ]
-            ([ div [ class "popup-prop area" ] [ div [ class "popup-prop-name" ] [ text labelContent ] ]
+            ([ div [ class "mapboxgl-popup-close-button", type_ "button", Html.Events.onClick (ClickPopup (Basics.not model.clickPopup)), attribute "aria-label" "Close popup" ] [ text "x" ]
+             , div [ class "popup-prop area" ] [ div [ class "popup-prop-name" ] [ text labelContent ] ]
              , div
                 [ class "popup-prop area turnout" ]
                 [ div [ class "popup-prop-name" ] [ text "Turnout" ]
                 , div [ class "popup-prop-value" ] [ text (((Basics.toFloat feat.ballots / Basics.toFloat feat.voters) * 100 |> Basics.round |> String.fromInt) ++ "%") ]
                 ]
-             , div [ class "popup-prop area turnout" ]
-                [ div [ class "popup-prop-name" ] [ text "Votes" ]
-                , div [ class "popup-prop-value" ] [ text (String.fromInt voteDenom) ]
-                ]
+             , hr [] []
              ]
                 ++ List.map
                     (\candidate ->
@@ -302,12 +300,15 @@ popupElFeat model candidates feat =
                                 [ div [] [ text (Dict.get candidate.key feat.candidates |> Maybe.withDefault 0 |> String.fromInt) ]
                                 , div []
                                     [ text
-                                        ((Dict.get candidate.key feat.candidates
-                                            |> Maybe.withDefault 0
-                                            |> Basics.toFloat
-                                            |> (/) (Basics.toFloat voteDenom)
+                                        (((/)
+                                            (Dict.get candidate.key feat.candidates
+                                                |> Maybe.withDefault 0
+                                                |> Basics.toFloat
+                                            )
+                                            (Basics.toFloat voteDenom)
                                             |> (*) 100
-                                            |> String.fromFloat
+                                            |> Basics.round
+                                            |> String.fromInt
                                          )
                                             ++ "%"
                                         )
@@ -328,6 +329,7 @@ type alias Model =
     , position : LngLat
     , point : Point
     , showPopup : Bool
+    , clickPopup : Bool
     , features : List Encode.Value
     , cursorPointer : Bool
     }
@@ -342,6 +344,7 @@ type Msg
     | MouseOut EventData
     | Click EventData
     | ProjectedPoint Point
+    | ClickPopup Bool
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -364,16 +367,23 @@ update msg model =
                 isActive =
                     Basics.not (List.isEmpty renderedFeatures)
             in
-            ( { model | cursorPointer = isActive, showPopup = isActive, position = lngLat, features = renderedFeatures }, projectPoint lngLat )
+            if model.clickPopup then
+                ( { model | cursorPointer = isActive, showPopup = True }, Cmd.none )
+
+            else
+                ( { model | cursorPointer = isActive, showPopup = isActive, position = lngLat, features = renderedFeatures }, projectPoint lngLat )
 
         ProjectedPoint point ->
             ( { model | point = point }, Cmd.none )
 
         MouseOut _ ->
-            ( { model | showPopup = True, cursorPointer = False }, Cmd.none )
+            ( { model | showPopup = model.clickPopup, cursorPointer = False }, Cmd.none )
 
         Click { lngLat, renderedFeatures } ->
             ( { model | position = lngLat, features = renderedFeatures }, Cmd.none )
+
+        ClickPopup clickPopup ->
+            ( { model | clickPopup = clickPopup, showPopup = clickPopup }, Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
@@ -406,6 +416,7 @@ view model =
             [ minZoom 9
             , maxZoom 17
             , onMouseMove Hover
+            , Mapbox.Element.onClick (\e -> ClickPopup (Basics.not model.clickPopup))
             , Mapbox.Element.onMouseOut MouseOut
             , Mapbox.Element.id "map"
             , eventFeaturesLayers [ "wards", "precincts" ]
