@@ -2,11 +2,13 @@ module Main exposing (main)
 
 import Array
 import Browser exposing (Document)
-import Dict
-import Html exposing (Attribute, Html, div, input, label, node, p, span, text)
+import Cmd exposing (Point, projectPoint, projectedPoint)
+import Dict exposing (Dict)
+import Html exposing (Attribute, Html, div, hr, input, label, node, option, p, select, span, text)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
-import Json.Encode
+import Json.Decode as Decode
+import Json.Encode as Encode
 import LngLat exposing (LngLat)
 import Mapbox.Element exposing (..)
 import Mapbox.Expression as E exposing (..)
@@ -23,15 +25,19 @@ main =
         { init = init
         , view = view
         , update = update
-        , subscriptions = \m -> Sub.none
+        , subscriptions = subscriptions
         }
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( Model "Wards" "Mayor" "5" False (LngLat 0 0) [] False
+    ( Model "Wards" "Mayor" "5" False (LngLat 0 0) (Point 0 0) False [] False
     , Cmd.none
     )
+
+
+mobileBreakpoint =
+    600
 
 
 colors =
@@ -127,10 +133,10 @@ candidatesLegend candidates =
     List.concatMap
         (\candidate ->
             [ p []
-                [ span [ attribute "class" "color", style "background-color" candidate.color ] []
-                , span [ attribute "class" "label" ] [ text candidate.label ]
+                [ span [ class "color", style "background-color" candidate.color ] []
+                , span [ class "label" ] [ text candidate.label ]
                 ]
-            , div [ attribute "class" "ramp-key" ] []
+            , div [ class "ramp-key" ] []
             ]
         )
         candidates
@@ -150,7 +156,7 @@ rampKey index =
                 interpolationColors |> List.drop 3
     in
     keyItems
-        |> List.indexedMap (\idx color -> div [ attribute "class" "item", style "background-color" (toColorStr color) ] [ text (Maybe.withDefault "" (Array.get idx labels)) ])
+        |> List.indexedMap (\idx color -> div [ class "item", style "background-color" (toColorStr color) ] [ text (Maybe.withDefault "" (Array.get idx labels)) ])
 
 
 popOpacityScale : Model -> E.Expression E.DataExpression Float
@@ -211,8 +217,120 @@ getLayer model layerStr =
         ]
 
 
+type alias Feature =
+    { ward : String, precinct : Maybe Int, ballots : Int, voters : Int, candidates : Dict String Int }
+
+
+featDecoder : Decode.Decoder Feature
+featDecoder =
+    let
+        candidateKeys =
+            wardCandidateMap |> Dict.values |> List.map Dict.keys |> List.concat
+    in
+    Decode.map5 Feature
+        (Decode.at [ "properties", "ward" ] (Decode.oneOf [ Decode.int |> Decode.map String.fromInt, Decode.string ]))
+        (Decode.maybe (Decode.at [ "properties", "precinct" ] Decode.int))
+        (Decode.at [ "properties", "ballots_cast" ] Decode.int)
+        (Decode.at [ "properties", "registered_voters" ] Decode.int)
+        (Decode.field "properties"
+            (Decode.keyValuePairs (Decode.oneOf [ Decode.int, Decode.succeed 0 ])
+                |> Decode.map (\vals -> List.filter (\( k, v ) -> List.member k candidateKeys) vals)
+                |> Decode.map Dict.fromList
+            )
+        )
+
+
+popupEl : Model -> List Candidate -> Html Msg
+popupEl model candidates =
+    case List.head model.features of
+        Just featObj ->
+            case Decode.decodeValue featDecoder featObj of
+                Ok feat ->
+                    popupElFeat model candidates feat
+
+                Err _ ->
+                    text ""
+
+        Nothing ->
+            text ""
+
+
+popupElFeat : Model -> List Candidate -> Feature -> Html Msg
+popupElFeat model candidates feat =
+    let
+        labelContent =
+            model.race
+                ++ ": Ward "
+                ++ feat.ward
+                ++ (if model.layer == "Precincts" then
+                        ", Precinct " ++ String.fromInt (Maybe.withDefault 0 feat.precinct)
+
+                    else
+                        ""
+                   )
+
+        voteDenom =
+            List.foldl (+) 0 (List.map (\c -> Maybe.withDefault 0 (Dict.get c.key feat.candidates)) candidates)
+    in
+    div
+        [ class "mapboxgl-popup mapboxgl-popup-anchor-bottom"
+        , style "transform" ("translate(-50%, -100%) translate(" ++ String.fromFloat model.point.x ++ "px," ++ String.fromFloat model.point.y ++ "px)")
+        ]
+        [ div [ class "mapboxgl-popup-tip" ] []
+        , div [ class "mapboxgl-popup-content" ]
+            ([ div [ class "popup-prop area" ] [ div [ class "popup-prop-name" ] [ text labelContent ] ]
+             , div
+                [ class "popup-prop area turnout" ]
+                [ div [ class "popup-prop-name" ] [ text "Turnout" ]
+                , div [ class "popup-prop-value" ] [ text (((Basics.toFloat feat.ballots / Basics.toFloat feat.voters) * 100 |> Basics.round |> String.fromInt) ++ "%") ]
+                ]
+             , div [ class "popup-prop area turnout" ]
+                [ div [ class "popup-prop-name" ] [ text "Votes" ]
+                , div [ class "popup-prop-value" ] [ text (String.fromInt voteDenom) ]
+                ]
+             ]
+                ++ List.map
+                    (\candidate ->
+                        div [ class "popup-prop" ]
+                            [ div
+                                [ class "popup-prop-name" ]
+                                [ span [ class "color", style "background-color" candidate.color ] []
+                                , span [] [ text candidate.label ]
+                                ]
+                            , div
+                                [ class "popup-prop-value" ]
+                                [ div [] [ text (Dict.get candidate.key feat.candidates |> Maybe.withDefault 0 |> String.fromInt) ]
+                                , div []
+                                    [ text
+                                        ((Dict.get candidate.key feat.candidates
+                                            |> Maybe.withDefault 0
+                                            |> Basics.toFloat
+                                            |> (/) (Basics.toFloat voteDenom)
+                                            |> (*) 100
+                                            |> String.fromFloat
+                                         )
+                                            ++ "%"
+                                        )
+                                    ]
+                                ]
+                            ]
+                    )
+                    candidates
+            )
+        ]
+
+
 type alias Model =
-    { layer : MapLayer, race : Race, ward : Ward, scaleOpacity : Bool, position : LngLat, features : List Json.Encode.Value, cursorPointer : Bool }
+    { layer : MapLayer
+    , race : Race
+    , ward : Ward
+    , scaleOpacity : Bool
+    , position : LngLat
+    , point : Point
+    , showPopup : Bool
+    , features : List Encode.Value
+    , cursorPointer : Bool
+    }
 
 
 type Msg
@@ -223,6 +341,7 @@ type Msg
     | Hover EventData
     | MouseOut EventData
     | Click EventData
+    | ProjectedPoint Point
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -241,20 +360,35 @@ update msg model =
             ( { model | scaleOpacity = newOpacity }, Cmd.none )
 
         Hover { lngLat, renderedFeatures } ->
-            ( { model | cursorPointer = Basics.not (List.isEmpty renderedFeatures), position = lngLat, features = renderedFeatures }, Cmd.none )
+            let
+                isActive =
+                    Basics.not (List.isEmpty renderedFeatures)
+            in
+            ( { model | cursorPointer = isActive, showPopup = isActive, position = lngLat, features = renderedFeatures }, projectPoint lngLat )
+
+        ProjectedPoint point ->
+            ( { model | point = point }, Cmd.none )
 
         MouseOut _ ->
-            ( { model | cursorPointer = False }, Cmd.none )
+            ( { model | showPopup = True, cursorPointer = False }, Cmd.none )
 
         Click { lngLat, renderedFeatures } ->
             ( { model | position = lngLat, features = renderedFeatures }, Cmd.none )
 
 
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    projectedPoint ProjectedPoint
+
+
 view : Model -> Html Msg
 view model =
+    let
+        candidates =
+            getCandidates model.race model.ward
+    in
     div
-        [ style "height" "100vh"
-        ]
+        []
         [ node "style"
             []
             [ text
@@ -273,6 +407,7 @@ view model =
             , maxZoom 17
             , onMouseMove Hover
             , Mapbox.Element.onMouseOut MouseOut
+            , Mapbox.Element.id "map"
             , eventFeaturesLayers [ "wards", "precincts" ]
             ]
             (mapStyle
@@ -280,8 +415,13 @@ view model =
                 , getLayer model "precincts"
                 ]
             )
+        , if model.showPopup then
+            popupEl model candidates
+
+          else
+            text ""
         , div [ attribute "id" "legend" ]
-            ([ p [ attribute "class" "label" ] [ text "Chicago 2019 Runoff" ] ]
+            ([ p [ class "label" ] [ text "Chicago 2019 Runoff" ] ]
                 ++ List.map
                     (\race ->
                         p []
@@ -299,5 +439,35 @@ view model =
                             ]
                     )
                     races
+                ++ (if model.race == "City Council" then
+                        [ p []
+                            [ label
+                                [ attribute "for" "council" ]
+                                [ text "Ward" ]
+                            , select
+                                [ attribute "id" "council", name "council", onInput UpdateWard ]
+                                (List.map (\ward -> option [ value ward, selected (model.ward == ward) ] [ text ward ]) wards)
+                            ]
+                        ]
+
+                    else
+                        []
+                   )
+                ++ [ hr [] [] ]
+                ++ (List.indexedMap
+                        (\idx c ->
+                            [ p []
+                                [ span [ class "color", style "background-color" c.color ] []
+                                , span [ class "label" ] [ text c.label ]
+                                ]
+                            , div [ class "ramp-key" ] (rampKey idx)
+                            ]
+                        )
+                        candidates
+                        |> List.concat
+                   )
+                ++ [ hr [] [] ]
+                ++ List.map (\l -> p [] [ label [] [ input [ type_ "radio", name "layer", value l, checked (model.layer == l), onCheck (\b -> UpdateLayer l) ] [], text l ] ]) layers
+                ++ [ p [] [ label [] [ input [ type_ "checkbox", name "opacity", value "opacity", checked model.scaleOpacity, onCheck UpdateOpacity ] [], text "Opacity by # Votes" ] ] ]
             )
         ]
