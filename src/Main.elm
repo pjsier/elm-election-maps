@@ -107,6 +107,19 @@ wardCandidateMap =
         , ( "Treasurer", Dict.fromList [ ( "melissa_conyearservin", "Conyears-Ervin" ), ( "ameya_pawar", "Pawar" ) ] )
         , ( "5", Dict.fromList [ ( "leslie_a_hairston", "Hairston" ), ( "william_calloway", "Calloway" ) ] )
         , ( "6", Dict.fromList [ ( "roderick_t_sawyer", "Sawyer" ), ( "deborah_a_fosterbonner", "Foster-Bonner" ) ] )
+        , ( "15", Dict.fromList [ ( "raymond_a_lopez", "Lopez" ), ( "rafael_rafa_yanez", "Yañez" ) ] )
+        , ( "16", Dict.fromList [ ( "stephanie_d_coleman", "Coleman" ), ( "toni_l_foulkes", "Foulkes" ) ] )
+        , ( "20", Dict.fromList [ ( "nicole_j_johnson", "Johnson" ), ( "jeanette_b_taylor", "Taylor" ) ] )
+        , ( "21", Dict.fromList [ ( "howard_b_brookins_jr", "Brookins" ), ( "marvin_mcneil", "McNeil" ) ] )
+        , ( "25", Dict.fromList [ ( "alexander_acevedo", "Acevedo" ), ( "byron_sigcholopez", "Sigcho-Lopez" ) ] )
+        , ( "30", Dict.fromList [ ( "jessica_w_gutierrez", "Gutierrez" ), ( "ariel_e_reboyras", "Reboyras" ) ] )
+        , ( "31", Dict.fromList [ ( "milagros_santiago", "Santiago" ), ( "felix_cardona_jr", "Cardona" ) ] )
+        , ( "33", Dict.fromList [ ( "rossana_sanchez", "Rodríguez-Sánchez" ), ( "deborah_l_mell", "Mell" ) ] )
+        , ( "39", Dict.fromList [ ( "robert_murphy", "Murphy" ), ( "samantha_sam_nugent", "Nugent" ) ] )
+        , ( "40", Dict.fromList [ ( "andr_vasquez", "Vasquez" ), ( "patrick_j_oconnor", "O'Connor" ) ] )
+        , ( "43", Dict.fromList [ ( "derek_lindblom", "Lindblom" ), ( "michele_smith", "Smith" ) ] )
+        , ( "46", Dict.fromList [ ( "marianne_lalonde", "Lalonde" ), ( "james_cappleman", "Cappleman" ) ] )
+        , ( "47", Dict.fromList [ ( "michael_a_negron", "Negron" ), ( "matt_martin", "Martin" ) ] )
         ]
 
 
@@ -156,7 +169,12 @@ rampKey index =
                 interpolationColors |> List.drop 3
     in
     keyItems
-        |> List.indexedMap (\idx color -> div [ class "item", style "background-color" (toColorStr color) ] [ text (Maybe.withDefault "" (Array.get idx labels)) ])
+        |> List.indexedMap
+            (\idx color ->
+                div
+                    [ class "item", style "background-color" (toColorStr color) ]
+                    [ text (Maybe.withDefault "" (Array.get idx labels)) ]
+            )
 
 
 popOpacityScale : Model -> E.Expression E.DataExpression Float
@@ -182,7 +200,10 @@ candidateFillColor candidates =
         [ a, b ] ->
             (E.getProperty (str a.key) |> E.divideBy (E.getProperty (str "ballots_cast")))
                 |> E.minus (E.getProperty (str b.key) |> E.divideBy (E.getProperty (str "ballots_cast")))
-                |> E.interpolate E.Linear (List.map2 Tuple.pair interpolationMargin interpolationColors |> List.map (\( v, ( r, g, bl ) ) -> ( v, E.rgba r g bl 1 )))
+                |> E.interpolate E.Linear
+                    (List.map2 Tuple.pair interpolationMargin interpolationColors
+                        |> List.map (\( v, ( r, g, bl ) ) -> ( v, E.rgba r g bl 1 ))
+                    )
 
         other ->
             E.getProperty (str "ballots_cast")
@@ -274,16 +295,39 @@ popupElFeat model candidates feat =
     in
     div
         [ class "mapboxgl-popup mapboxgl-popup-anchor-bottom"
-        , style "transform" ("translate(-50%, -100%) translate(" ++ String.fromFloat model.point.x ++ "px," ++ String.fromFloat model.point.y ++ "px)")
+        , style "transform"
+            ("translate(-50%, -100%) translate("
+                ++ String.fromFloat model.point.x
+                ++ "px,"
+                ++ String.fromFloat model.point.y
+                ++ "px)"
+            )
         ]
         [ div [ class "mapboxgl-popup-tip" ] []
         , div [ class "mapboxgl-popup-content" ]
-            ([ div [ class "mapboxgl-popup-close-button", type_ "button", Html.Events.onClick (ClickPopup (Basics.not model.clickPopup)), attribute "aria-label" "Close popup" ] [ text "x" ]
+            ([ div
+                [ class "mapboxgl-popup-close-button"
+                , type_ "button"
+                , Html.Events.onClick (ClickPopup (Basics.not model.clickPopup))
+                , attribute "label" "Close popup"
+                , attribute "aria-label" "Close popup"
+                ]
+                [ text "×" ]
              , div [ class "popup-prop area" ] [ div [ class "popup-prop-name" ] [ text labelContent ] ]
              , div
                 [ class "popup-prop area turnout" ]
                 [ div [ class "popup-prop-name" ] [ text "Turnout" ]
-                , div [ class "popup-prop-value" ] [ text (((Basics.toFloat feat.ballots / Basics.toFloat feat.voters) * 100 |> Basics.round |> String.fromInt) ++ "%") ]
+                , div
+                    [ class "popup-prop-value" ]
+                    [ text
+                        (((Basics.toFloat feat.ballots / Basics.toFloat feat.voters)
+                            * 100
+                            |> Basics.round
+                            |> String.fromInt
+                         )
+                            ++ "%"
+                        )
+                    ]
                 ]
              , hr [] []
              ]
@@ -316,7 +360,11 @@ popupElFeat model candidates feat =
                                 ]
                             ]
                     )
-                    candidates
+                    (List.sortBy
+                        (\c -> Dict.get c.key feat.candidates |> Maybe.withDefault 0)
+                        candidates
+                        |> List.reverse
+                    )
             )
         ]
 
@@ -345,6 +393,7 @@ type Msg
     | Click EventData
     | ProjectedPoint Point
     | ClickPopup Bool
+    | MapMove Decode.Value
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -372,6 +421,13 @@ update msg model =
 
             else
                 ( { model | cursorPointer = isActive, showPopup = isActive, position = lngLat, features = renderedFeatures }, projectPoint lngLat )
+
+        MapMove _ ->
+            if model.clickPopup then
+                ( model, projectPoint model.position )
+
+            else
+                ( model, Cmd.none )
 
         ProjectedPoint point ->
             ( { model | point = point }, Cmd.none )
@@ -418,6 +474,8 @@ view model =
             , onMouseMove Hover
             , Mapbox.Element.onClick (\e -> ClickPopup (Basics.not model.clickPopup))
             , Mapbox.Element.onMouseOut MouseOut
+            , Mapbox.Element.on "zoom" (Decode.map MapMove Decode.value)
+            , Mapbox.Element.on "move" (Decode.map MapMove Decode.value)
             , Mapbox.Element.id "map"
             , eventFeaturesLayers [ "wards", "precincts" ]
             ]
@@ -478,7 +536,38 @@ view model =
                         |> List.concat
                    )
                 ++ [ hr [] [] ]
-                ++ List.map (\l -> p [] [ label [] [ input [ type_ "radio", name "layer", value l, checked (model.layer == l), onCheck (\b -> UpdateLayer l) ] [], text l ] ]) layers
-                ++ [ p [] [ label [] [ input [ type_ "checkbox", name "opacity", value "opacity", checked model.scaleOpacity, onCheck UpdateOpacity ] [], text "Opacity by # Votes" ] ] ]
+                ++ List.map
+                    (\l ->
+                        p []
+                            [ label
+                                []
+                                [ input
+                                    [ type_ "radio"
+                                    , name "layer"
+                                    , value l
+                                    , checked (model.layer == l)
+                                    , onCheck (\b -> UpdateLayer l)
+                                    ]
+                                    []
+                                , text l
+                                ]
+                            ]
+                    )
+                    layers
+                ++ [ hr [] []
+                   , p []
+                        [ label []
+                            [ input
+                                [ type_ "checkbox"
+                                , name "opacity"
+                                , value "opacity"
+                                , checked model.scaleOpacity
+                                , onCheck UpdateOpacity
+                                ]
+                                []
+                            , text "Opacity by # Votes"
+                            ]
+                        ]
+                   ]
             )
         ]
